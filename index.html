@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="no">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>VizNor — SSB uten kjedsomheten</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <style>
+    :root { --bg:#0f172a; --card:#1e293b; --accent:#38bdf8; --text:#e2e8f0; --muted:#94a3b8; }
+    * { box-sizing: border-box; }
+    body { margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background:var(--bg); color:var(--text); line-height:1.5; }
+    header { padding: 2rem 1.5rem 1rem; text-align:center; }
+    header h1 { margin:0 0 .25rem; font-size:1.75rem; }
+    header p { margin:0; color:var(--muted); font-size:.95rem; }
+    main { max-width: 900px; margin: 0 auto; padding: 0 1.5rem 3rem; }
+    .card { background:var(--card); border-radius:14px; padding:1.25rem; box-shadow:0 10px 30px rgba(0,0,0,.3); }
+    .controls { display:flex; flex-wrap:wrap; gap:.75rem; align-items:center; margin-bottom:1rem; }
+    select, button { background:#0b1220; color:var(--text); border:1px solid #334155; border-radius:8px; padding:.55rem .8rem; font-size:.9rem; }
+    button { cursor:pointer; background:var(--accent); color:#06263b; border:none; font-weight:600; }
+    button:hover { filter:brightness(1.1); }
+    .status { color:var(--muted); font-size:.85rem; min-height:1.2em; }
+    canvas { max-height: 420px; }
+    footer { text-align:center; color:var(--muted); font-size:.8rem; padding:1rem; }
+    footer a { color:var(--accent); }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>VizNor</h1>
+    <p>Live statistikk fra SSB — uten kjedsomheten.</p>
+  </header>
+  <main>
+    <div class="card">
+      <div class="controls">
+        <label>Tabell:
+          <select id="table">
+            <option value="06913">06913 — Befolkning, hele landet</option>
+            <option value="01222">01222 — Sysselsatte, 15–74 år</option>
+          </select>
+        </label>
+        <button id="refresh">Hent på nytt</button>
+        <span class="status" id="status">Klar.</span>
+      </div>
+      <canvas id="chart"></canvas>
+    </div>
+  </main>
+  <footer>
+    Kilde: <a href="https://www.ssb.no/statbank" target="_blank" rel="noopener">SSB PxWebApi v2</a> · Bygget med Chart.js
+  </footer>
+
+  <script>
+    const API = 'https://data.ssb.no/api/v0/no/table';
+    const statusEl = document.getElementById('status');
+    const tableSel = document.getElementById('table');
+    let chart;
+
+    const TABLES = {
+      '06913': { title: 'Befolkning i Norge', unit: 'personer' },
+      '01222': { title: 'Sysselsatte 15–74 år', unit: 'personer' }
+    };
+
+    async function load(tableId) {
+      statusEl.textContent = 'Henter fra SSB…';
+      try {
+        const meta = await fetch(`${API}/${tableId}`).then(r => r.json());
+        const dims = meta.dimension || {};
+        const timeDim = Object.values(dims).find(d => d.role === 'time') || Object.values(dims).pop();
+        const timeKeys = Object.keys(timeDim.category.index);
+        const lastKeys = timeKeys.slice(-12);
+
+        const regionDim = Object.values(dims).find(d => d.role === 'geo') || Object.values(dims)[0];
+        const regionKey = Object.keys(regionDim.category.index)[0];
+
+        const body = {
+          query: [
+            { code: regionDim.code, selection: { filter: 'item', values: [regionKey] } },
+            { code: timeDim.code, selection: { filter: 'item', values: lastKeys } }
+          ],
+          response: { format: 'json-stat2' }
+        };
+
+        const data = await fetch(`${API}/${tableId}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        }).then(r => r.json());
+
+        const values = data.value || [];
+        const labels = lastKeys.map(k => timeDim.category.label[k]);
+        const info = TABLES[tableId] || { title: meta.label || tableId, unit: '' };
+
+        if (chart) chart.destroy();
+        chart = new Chart(document.getElementById('chart'), {
+          type: 'line',
+          data: {
+            labels,
+            datasets: [{
+              label: info.title,
+              data: values,
+              borderColor: '#38bdf8',
+              backgroundColor: 'rgba(56,189,248,.15)',
+              fill: true,
+              tension: .3,
+              pointRadius: 3
+            }]
+          },
+          options: {
+            responsive: true,
+            plugins: {
+              legend: { labels: { color: '#e2e8f0' } },
+              title: { display: true, text: info.title, color: '#e2e8f0' }
+            },
+            scales: {
+              x: { ticks: { color: '#94a3b8' }, grid: { color: '#1e293b' } },
+              y: { ticks: { color: '#94a3b8' }, grid: { color: '#1e293b' }, title: { display: true, text: info.unit, color: '#94a3b8' } }
+            }
+          }
+        });
+        statusEl.textContent = `Sist oppdatert: ${new Date().toLocaleString('nb-NO')}`;
+      } catch (e) {
+        statusEl.textContent = 'Feil: ' + e.message;
+        console.error(e);
+      }
+    }
+
+    document.getElementById('refresh').addEventListener('click', () => load(tableSel.value));
+    tableSel.addEventListener('change', () => load(tableSel.value));
+    load(tableSel.value);
+  </script>
+</body>
+</html>
